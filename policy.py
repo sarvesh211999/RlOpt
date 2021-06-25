@@ -1,16 +1,30 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ray.rllib.models.modelv2 import ModelV2
+from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
+from ray.rllib.utils.annotations import override
+from ray.rllib.models.torch.fcnet import FullyConnectedNetwork as TorchFC
 
-class PolicyNetwork(nn.Module):
+
+class PolicyNetwork(TorchModelV2, nn.Module):
+    """Example of a PyTorch custom model that just delegates to a fc-net."""
+
+    def __init__(self, obs_space, action_space, num_outputs, model_config,
+                 name):
+        TorchModelV2.__init__(self, obs_space, action_space, num_outputs,
+                              model_config, name)
+        nn.Module.__init__(self)
+
+        self.torch_sub_model = TorchFC(obs_space, action_space, num_outputs,
+                                       model_config, name)
+
     
-    def __init__(self,):
-        super(PolicyNetwork, self).__init__()
-        
-        self.fc1 = nn.Linear(2,3)
-        
-    def forward(self, data):
-        print("inside model")
-        print(data)
+    def forward(self, input_dict, state, seq_lens):
+        input_dict["obs"] = input_dict["obs"].float()
+        fc_out, _ = self.torch_sub_model(input_dict, state, seq_lens)
+        return fc_out, []
 
-        return self.fc1(data)
+    def value_function(self):
+        return torch.reshape(self.torch_sub_model.value_function(), [-1])
+

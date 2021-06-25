@@ -6,25 +6,8 @@ from scipy.spatial import distance
 import MultiAgentEnv as ma_env
 
 from policy import PolicyNetwork
+from ray.rllib.utils.annotations import override
 from ray.rllib.models import ModelCatalog
-
-# cartesian x, y, z. if in spherical coordinates r, theta, phi
-def action_space_domain(coordinates):
-    # pdb.set_trace()
-    llim, ulim = -0.5, 0.5
-    action_space_wdirection = {"x":[llim, ulim], "y":[llim, ulim], "z":[llim, ulim]}
-    random_displacment = np.random.uniform(-0.5, 0.5, coordinates.shape)
-    return random_displacment
-# observation_space = [coordinates, delta_coor, force, energy]
-
-methane = np.array([[-0.02209687,  0.00321505,  0.01651974],
-                   [-0.66900878,  0.88935986, -0.1009085 ],
-                   [-0.37778794, -0.85775189, -0.58829603],
-                   [ 0.09642092, -0.3151253 ,  1.06378087],
-                   [ 0.97247267,  0.28030227, -0.39109608]])
-
-
-# pdb.set_trace()
 # env = ma_env.MA_env(config={"atoms":["C", "H", "H", "C", "H"]})
 # print(env.reset(methane))
 # # observation, reward = env.reset()
@@ -84,7 +67,7 @@ config={
     "env":"MA_env",
     "framework": "torch",
     "num_gpus": int(os.environ.get("RLLIB_NUM_GPUS", "0")),
-    "env_config": {"atoms":["C", "H", "H", "C", "H"]}
+    "env_config": {"atoms":["C", "C", "C", "C", "C"]}
     
 }
 
