@@ -4,6 +4,11 @@ import numpy as np
 from ray.tune.registry import register_env
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 import numpy as np
+import random
+
+from ase import Atoms
+from ase.io import Trajectory
+from gpaw import GPAW
 # cartesian x, y, z. if in spherical coordinates r, theta, phi
 # action_space = [x_dir, y_dir, z_dir]
 
@@ -16,6 +21,30 @@ methane = np.array([[-0.02209687,  0.00321505,  0.01651974],
                    [-0.37778794, -0.85775189, -0.58829603],
                    [ 0.09642092, -0.3151253 ,  1.06378087],
                    [ 0.97247267,  0.28030227, -0.39109608]])
+
+
+
+def cartesian_to_spherical(pos: np.ndarray) -> np.ndarray:
+    theta_phi = np.empty(shape=pos.shape[:-1] + (3, ))
+
+    x, y, z = pos[..., 0], pos[..., 1], pos[..., 2]
+    r = np.linalg.norm(pos, axis=-1)
+    theta_phi[..., 0] = r
+    theta_phi[..., 1] = np.arccos(z / r)  # theta
+    theta_phi[..., 2] = np.arctan2(y, x)  # phi
+
+    return theta_phi
+
+def spherical_to_cartesian(theta_phi: np.ndarray) -> np.ndarray:
+    theta, phi = theta_phi[..., 0], theta_phi[..., 1]
+    x = np.sin(theta) * np.cos(phi)
+    y = np.sin(theta) * np.sin(phi)
+    z = np.cos(theta)
+    return np.stack([x, y, z], axis=-1)
+
+
+coords = cartesian_to_spherical(methane)
+methane = spherical_to_cartesian(coords[:,1:])
 
 class MA_env(MultiAgentEnv):
     def __init__(self, env_config):
@@ -33,15 +62,17 @@ class MA_env(MultiAgentEnv):
             self.agents.append(Atom_Agent())
 
         self.action_space = spaces.Box(low=-0.5,high=0.5, shape=(3,))
-        self.observation_space = spaces.Box(low=-100,high=100, shape=(3,))
+        self.observation_space = spaces.Box(low=-10000,high=10000, shape=(3,))
     
     def reset(self):
         self.dones = set()
 
         ## set new molecule from dataset here
-        coordinates = methane
+        coordinates = cartesian_to_spherical(methane)
         return_dict = {self.atom_agent_map[i]: agent.reset(coordinates[i]) for i, agent in enumerate(self.agents)}
 
+
+        ## feature vector
         return return_dict
 
     def step(self, action):
@@ -57,6 +88,27 @@ class MA_env(MultiAgentEnv):
             obs[idx], rew[idx], done[idx], info[idx] = self.agents[self.atom_agent_map.index(idx)].step(val)
             if done[idx]:
                 self.dones.add(idx)
+
+        final_coordinates = np.array([obs[key] for key in self.atom_agent_map])
+
+        atoms = Atoms('C1H4', positions=final_coordinates)
+        atoms.center(vacuum=3.0)
+
+        calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
+        atoms.calc = calc
+
+        f = atoms.get_forces()
+
+        spherical_forces = cartesian_to_spherical(f)
+
+        for idx,key in enumerate(atom_agent_map):
+            rew[key] = np.abs(1/spherical_forces[idx][0])
+2.571103
+
+        ## convert obs to feature vector here
+
+        ## calculate atom wise reward here
+
         done["__all__"] = len(self.dones) == len(self.agents)
 
         return obs, rew, done, info
@@ -65,7 +117,7 @@ class MA_env(MultiAgentEnv):
 class Atom_Agent(gym.Env):
     def __init__(self):
         self.action_space = spaces.Box(low=-0.5,high=0.5, shape=(3,))
-        self.observation_space = spaces.Box(low=-100,high=100, shape=(3,))
+        self.observation_space = spaces.Box(low=-10000,high=10000, shape=(3,))
 
     def reset(self,coordinates):
         self.coordinates = coordinates
@@ -75,12 +127,7 @@ class Atom_Agent(gym.Env):
     
     def step(self, action):
 
-        ## return obs, rew, terminmated,info
-        self.coordinates = np.array(self.coordinates) + np.array(action)
-        
-        ## return features instead of coordintaes
-        ## return coordinates in info dict last dict
-        terminate = False
-        if np.any(self.coordinates) > 100 or np.any(self.coordinates) < -100:
-            terminate = True
-        return self.coordinates, 1,terminate, {}
+        new_coordinates = spherical_to_cartesian(self.coordinates[:,1:]) + np.array(action)
+        self.coordinates = cartesian_to_spherical(new_coordinates)
+
+        return self.coordinates, None,False, {}

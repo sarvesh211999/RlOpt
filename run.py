@@ -24,7 +24,7 @@ ModelCatalog.register_custom_model("modelC", model_C)
 ModelCatalog.register_custom_model("modelH", model_H)
 
 act_space = spaces.Box(low=-0.5,high=0.5, shape=(3,))
-obs_space = spaces.Box(low=-100,high=100, shape=(3,))
+obs_space = spaces.Box(low=-10000,high=10000, shape=(3,))
 
 def gen_policy(atom):
     model = "model{}".format(atom)
@@ -65,16 +65,17 @@ config={
         "policies_to_train": ["policy_C", "policy_H"],
     },
     "env":"MA_env",
+    "log_level":"DEBUG",
     "framework": "torch",
     "num_gpus": int(os.environ.get("RLLIB_NUM_GPUS", "0")),
-    "env_config": {"atoms":["C", "C", "C", "C", "C"]}
+    "env_config": {"atoms":["C", "H", "H", "H", "H"]}
     
 }
 
 stop = {
     "episode_reward_mean": 150.0,
-    "timesteps_total": 100000,
-    "training_iteration": 200,
+    "timesteps_total": 100,
+    "training_iteration": 20,
 }
-results = tune.run("PPO", stop=stop,config=config, verbose=1)
+results = tune.run("PPO", stop=stop,config=config, verbose=1,checkpoint_at_end=True)
 ray.shutdown()
