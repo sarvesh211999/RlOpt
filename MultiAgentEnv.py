@@ -36,15 +36,12 @@ def cartesian_to_spherical(pos: np.ndarray) -> np.ndarray:
     return theta_phi
 
 def spherical_to_cartesian(theta_phi: np.ndarray) -> np.ndarray:
-    theta, phi = theta_phi[..., 0], theta_phi[..., 1]
-    x = np.sin(theta) * np.cos(phi)
-    y = np.sin(theta) * np.sin(phi)
-    z = np.cos(theta)
+    r, theta, phi = theta_phi[..., 0], theta_phi[..., 1], theta_phi[..., 2]
+    x = r * np.sin(theta) * np.cos(phi)
+    y = r * np.sin(theta) * np.sin(phi)
+    z = r * np.cos(theta)
     return np.stack([x, y, z], axis=-1)
 
-
-coords = cartesian_to_spherical(methane)
-methane = spherical_to_cartesian(coords[:,1:])
 
 class MA_env(MultiAgentEnv):
     def __init__(self, env_config):
@@ -65,6 +62,7 @@ class MA_env(MultiAgentEnv):
         self.observation_space = spaces.Box(low=-10000,high=10000, shape=(3,))
     
     def reset(self):
+        print("Reset called")
         self.dones = set()
 
         ## set new molecule from dataset here
@@ -90,20 +88,31 @@ class MA_env(MultiAgentEnv):
                 self.dones.add(idx)
 
         final_coordinates = np.array([obs[key] for key in self.atom_agent_map])
-
-        atoms = Atoms('C1H4', positions=final_coordinates)
+        cart_coordinates = spherical_to_cartesian(final_coordinates)
+        atoms = Atoms('C1H4', positions=cart_coordinates)
         atoms.center(vacuum=3.0)
+        try:
+            calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
+            atoms.calc = calc
 
-        calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
-        atoms.calc = calc
+            f = atoms.get_forces()
 
-        f = atoms.get_forces()
+            spherical_forces = cartesian_to_spherical(f)
 
-        spherical_forces = cartesian_to_spherical(f)
+            for idx,key in enumerate(self.atom_agent_map):
+                rew[key] = np.abs(1/(spherical_forces[idx][0]))
+                if spherical_forces[idx][0] < 2.571103:
+                    self.dones.add(idx)
+            print(len(self.dones))
+            print(spherical_forces[:,0])
+            print(rew)
+        except:
+            print("GPAW Converge error")
+            for idx,key in enumerate(self.atom_agent_map):
+                rew[key] = -1
+                self.dones.add(idx)
 
-        for idx,key in enumerate(atom_agent_map):
-            rew[key] = np.abs(1/spherical_forces[idx][0])
-2.571103
+# 2.571103
 
         ## convert obs to feature vector here
 
@@ -120,14 +129,13 @@ class Atom_Agent(gym.Env):
         self.observation_space = spaces.Box(low=-10000,high=10000, shape=(3,))
 
     def reset(self,coordinates):
-        self.coordinates = coordinates
+        self.coordinates = np.array(coordinates)
 
         ## return features instead of coordintaes
         return self.coordinates
     
     def step(self, action):
-
-        new_coordinates = spherical_to_cartesian(self.coordinates[:,1:]) + np.array(action)
+        new_coordinates = spherical_to_cartesian(self.coordinates) + np.array(action)
         self.coordinates = cartesian_to_spherical(new_coordinates)
 
         return self.coordinates, None,False, {}
