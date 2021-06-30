@@ -78,5 +78,6 @@ stop = {
     "training_iteration": 20,
 }
 
-results = tune.run("PPO", stop=stop,config=config, verbose=1,checkpoint_at_end=True)
+results = tune.run("PPO", stop=stop, config=config, verbose=1, checkpoint_at_end=True,
+                    callbacks=[CustomLoggerCallback("log_test.txt")])
 ray.shutdown()
