@@ -8,6 +8,7 @@ import MultiAgentEnv as ma_env
 from policy import PolicyNetwork
 from ray.rllib.utils.annotations import override
 from ray.rllib.models import ModelCatalog
+
 # env = ma_env.MA_env(config={"atoms":["C", "H", "H", "C", "H"]})
 # print(env.reset(methane))
 # # observation, reward = env.reset()
@@ -17,12 +18,15 @@ from ray.rllib.models import ModelCatalog
 # print(new_state, reward, done,info)
 
 
-
+# create NN model for each atom type
 model_C = PolicyNetwork
 model_H = PolicyNetwork
 ModelCatalog.register_custom_model("modelC", model_C)
 ModelCatalog.register_custom_model("modelH", model_H)
 
+# define action space and observation space
+# action space is step the policy takes in angstrom
+# observation space are the coordinates of the single atom
 act_space = spaces.Box(low=-0.5,high=0.5, shape=(3,))
 obs_space = spaces.Box(low=-10000,high=10000, shape=(3,))
 
@@ -65,12 +69,13 @@ config={
         "policies_to_train": ["policy_C", "policy_H"],
     },
     "env":"MA_env",
-    "log_level":"DEBUG",
+    "log_level":"INFO",
     "framework": "torch",
-    "num_gpus": int(os.environ.get("RLLIB_NUM_GPUS", "0")),
+    "num_gpus": 1,
     "env_config": {"atoms":["C", "H", "H", "H", "H"]}
     
 }
+    # "num_gpus": int(os.environ.get("RLLIB_NUM_GPUS", "0")),
 
 stop = {
     "episode_reward_mean": 150.0,
@@ -78,6 +83,5 @@ stop = {
     "training_iteration": 20,
 }
 
-results = tune.run("PPO", stop=stop, config=config, verbose=1, checkpoint_at_end=True,
-                    callbacks=[CustomLoggerCallback("log_test.txt")])
+results = tune.run("PPO", stop=stop, config=config, verbose=0, checkpoint_at_end=True, local_dir="results", log_to_file=True)
 ray.shutdown()
