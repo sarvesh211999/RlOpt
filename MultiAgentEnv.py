@@ -5,6 +5,7 @@ from ray.tune.registry import register_env
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 import numpy as np
 import random
+from sklearn.metrics.pairwise import euclidean_distances
 
 from ase import Atoms
 from ase.io import Trajectory
@@ -17,6 +18,8 @@ methane = np.array([[-0.02209687,  0.00321505,  0.01651974],
                    [-0.37778794, -0.85775189, -0.58829603],
                    [ 0.09642092, -0.3151253 ,  1.06378087],
                    [ 0.97247267,  0.28030227, -0.39109608]])
+
+bonds = [(1,2),(1,3),(1,3),(1,4)]
 
 ## AEV parameters
 Rcr = 5.2000e+00
@@ -35,6 +38,7 @@ num_species = 4
 aev_computer = torchani.AEVComputer(Rcr, Rca, EtaR, ShfR, EtaA, Zeta, ShfA, ShfZ, num_species)
 species_to_tensor = torchani.utils.ChemicalSymbolsToInts('HCNO')
 
+# def connectivity():
 
 
 def cartesian_to_spherical(pos: np.ndarray) -> np.ndarray:
@@ -59,7 +63,7 @@ def spherical_to_cartesian(theta_phi: np.ndarray) -> np.ndarray:
 class MA_env(MultiAgentEnv):
     def __init__(self, env_config):
         # pick actual env based on worker and env indexes
-
+        # pdb.set_trace()
         self.atoms = ["C", "H", "H", "H", "H"]
         self.dones = set()
         self.agents = []
@@ -79,8 +83,8 @@ class MA_env(MultiAgentEnv):
         self.energies = []
     
     def reset(self):
-        print("Reset called")
-        print("Energies:    ",self.energies)
+        print("\nReset called")
+        # print("Energies:    ",self.energies)
         self.dones = set()
         self.energies = []
         self.curr_coordinates = methane
@@ -122,31 +126,43 @@ class MA_env(MultiAgentEnv):
         obs = {self.atom_agent_map[i]: np.array(aev[0,i]) for i, agent in enumerate(self.agents)}
         # cart_coordinates = spherical_to_cartesian(final_coordinates)
 
-
         atoms = Atoms('C1H4', positions=final_coordinates)
         atoms.center(vacuum=3.0)
-        try:
-            calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
-            atoms.calc = calc
 
-            f = atoms.get_forces()
-            e = atoms.get_potential_energy()
-            self.energies.append(e)
-            
+        # check if bond exists
+        dist_mat = euclidean_distances(atoms.get_positions())
+        bond_dist = np.array([dist_mat[i] for i in bonds]) < 2.5
 
-            spherical_forces = cartesian_to_spherical(f)
+        if np.all(bond_dist):
+            try:
+                calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
+                atoms.calc = calc
 
-            for idx,key in enumerate(self.atom_agent_map):
-                rew[key] = np.abs(1/(spherical_forces[idx][0]))
-                if spherical_forces[idx][0] < 2.571103:
+                f = atoms.get_forces()
+                e = atoms.get_potential_energy()
+                self.energies.append(e)
+                
+                spherical_forces = cartesian_to_spherical(f)
+
+                for idx,key in enumerate(self.atom_agent_map):
+                    rew[key] = np.abs(1/(spherical_forces[idx][0]))
+                    if spherical_forces[idx][0] < 2.571103:
+                        self.dones.add(idx)
+                print(f"forces = {spherical_forces[:,0]} energies = {e}")
+                # print(f"energies = {self.energies}")
+                print(f"bonds {np.array([dist_mat[i] for i in bonds])}")
+            except:
+                print("GPAW Converge error")
+                print(f"bonds {np.array([dist_mat[i] for i in bonds])}")
+                for idx,key in enumerate(self.atom_agent_map):
+                    rew[key] = -1
                     self.dones.add(idx)
-            print(spherical_forces[:,0],e)
-        except:
-            print("GPAW Converge error")
+        else:
+            print("Bond larger that max_cutoff")
+            print(f"bonds {np.array([dist_mat[i] for i in bonds])}")
             for idx,key in enumerate(self.atom_agent_map):
                 rew[key] = -1
                 self.dones.add(idx)
-
 # 2.571103
 
         ## convert obs to feature vector here

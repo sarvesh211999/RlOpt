@@ -44,7 +44,7 @@ def gen_policy(atom):
 policies = {"policy_C": gen_policy("C"),"policy_H": gen_policy("H")}
 policy_ids = list(policies.keys())
 
-def policy_mapping_fn(agent_id, episode, **kwargs):
+def policy_mapping_fn(agent_id, **kwargs):
     if agent_id.startswith("C"):
         pol_id = "policy_C"
     else:
@@ -78,7 +78,7 @@ config["env_config"] =  {"atoms":["C", "H", "H", "H", "H"]}
 config["rollout_fragment_length"] = 10
 config["sgd_minibatch_size"] = 16
 config["train_batch_size"] = 160
-config["num_workers"] = 10
+config["num_workers"] = 4
 
 print(pretty_print(config))
 
@@ -86,7 +86,7 @@ print(pretty_print(config))
 ray.init()
 agent = ppo.PPOTrainer(config, env="MA_env")
 
-n_iter = 100
+n_iter = 20
 for n in range(n_iter):
     result = agent.train()
     print(pretty_print(result))
