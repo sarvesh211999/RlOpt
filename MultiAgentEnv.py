@@ -9,6 +9,7 @@ from sklearn.metrics.pairwise import euclidean_distances
 
 from ase import Atoms
 from ase.io import Trajectory
+from ase.calculators.emt import EMT
 from gpaw import GPAW
 import torch
 import torchani
@@ -19,7 +20,7 @@ methane = np.array([[-0.02209687,  0.00321505,  0.01651974],
                    [ 0.09642092, -0.3151253 ,  1.06378087],
                    [ 0.97247267,  0.28030227, -0.39109608]])
 
-bonds = [(1,2),(1,3),(1,3),(1,4)]
+bonds = [(0,1),(0,2),(0,3),(0,4)]
 
 ## AEV parameters
 Rcr = 5.2000e+00
@@ -37,8 +38,6 @@ num_species = 4
 
 aev_computer = torchani.AEVComputer(Rcr, Rca, EtaR, ShfR, EtaA, Zeta, ShfA, ShfZ, num_species)
 species_to_tensor = torchani.utils.ChemicalSymbolsToInts('HCNO')
-
-# def connectivity():
 
 
 def cartesian_to_spherical(pos: np.ndarray) -> np.ndarray:
@@ -129,13 +128,17 @@ class MA_env(MultiAgentEnv):
         atoms = Atoms('C1H4', positions=final_coordinates)
         atoms.center(vacuum=3.0)
 
-        # check if bond exists
+        # calculte euclidean distance
         dist_mat = euclidean_distances(atoms.get_positions())
-        bond_dist = np.array([dist_mat[i] for i in bonds]) < 2.5
+        
+        # check if bond breaks with distance cutoff
+        bond_dist = np.array([dist_mat[i] for i in bonds]) < 2.0
 
         if np.all(bond_dist):
             try:
                 calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
+                # calc = EMT()
+
                 atoms.calc = calc
 
                 f = atoms.get_forces()
@@ -146,24 +149,25 @@ class MA_env(MultiAgentEnv):
 
                 for idx,key in enumerate(self.atom_agent_map):
                     rew[key] = np.abs(1/(spherical_forces[idx][0]))
-                    if spherical_forces[idx][0] < 2.571103:
+                    # force should be less than 0.01 eV/A 
+                    # 1 Hartree/Bohr = 51.42208619083232 eV/A
+                    # 2.571103
+                    if spherical_forces[idx][0] < 0.01:
                         self.dones.add(idx)
                 print(f"forces = {spherical_forces[:,0]} energies = {e}")
                 # print(f"energies = {self.energies}")
-                print(f"bonds {np.array([dist_mat[i] for i in bonds])}")
+                print(f"bonds = {np.array([dist_mat[i] for i in bonds])}")
             except:
                 print("GPAW Converge error")
                 print(f"bonds {np.array([dist_mat[i] for i in bonds])}")
                 for idx,key in enumerate(self.atom_agent_map):
-                    rew[key] = -1
+                    rew[key] = -0.20
                     self.dones.add(idx)
         else:
-            print("Bond larger that max_cutoff")
-            print(f"bonds {np.array([dist_mat[i] for i in bonds])}")
+            print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])}")
             for idx,key in enumerate(self.atom_agent_map):
-                rew[key] = -1
+                rew[key] = -0.20
                 self.dones.add(idx)
-# 2.571103
 
         ## convert obs to feature vector here
 

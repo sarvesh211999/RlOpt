@@ -75,10 +75,10 @@ config["log_level"] = "WARN"
 config["framework"] = "torch"
 config["num_gpus"] =  int(os.environ.get("RLLIB_NUM_GPUS", "0"))
 config["env_config"] =  {"atoms":["C", "H", "H", "H", "H"]}
-config["rollout_fragment_length"] = 10
+config["rollout_fragment_length"] = 32
 config["sgd_minibatch_size"] = 16
 config["train_batch_size"] = 160
-config["num_workers"] = 4
+config["num_workers"] = 1
 
 print(pretty_print(config))
 
@@ -90,4 +90,3 @@ n_iter = 20
 for n in range(n_iter):
     result = agent.train()
     print(pretty_print(result))
-
