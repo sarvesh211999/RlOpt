@@ -69,16 +69,18 @@ config["multiagent"] = {
         "policy_mapping_fn": policy_mapping_fn,
         "policies": policies,
         "policies_to_train": ["policy_C", "policy_H"],
+        "count_steps_by": "env_steps"
     }
 
 config["log_level"] = "WARN"
 config["framework"] = "torch"
 config["num_gpus"] =  int(os.environ.get("RLLIB_NUM_GPUS", "0"))
 config["env_config"] =  {"atoms":["C", "H", "H", "H", "H"]}
-config["rollout_fragment_length"] = 32
+config["rollout_fragment_length"] = 16
 config["sgd_minibatch_size"] = 16
 config["train_batch_size"] = 160
-config["num_workers"] = 1
+config["num_workers"] = 4
+# config["monitor"] = True
 
 print(pretty_print(config))
 
@@ -86,7 +88,11 @@ print(pretty_print(config))
 ray.init()
 agent = ppo.PPOTrainer(config, env="MA_env")
 
-n_iter = 20
+n_iter = 200
 for n in range(n_iter):
     result = agent.train()
     print(pretty_print(result))
+
+    if n % 10 == 0:
+        checkpoint = agent.save()
+        print("checkpoint saved at", checkpoint)
