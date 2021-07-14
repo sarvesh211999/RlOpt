@@ -14,11 +14,27 @@ from gpaw import GPAW
 import torch
 import torchani
 
-methane = np.array([[-0.02209687,  0.00321505,  0.01651974],
-                   [-0.66900878,  0.88935986, -0.1009085 ],
-                   [-0.37778794, -0.85775189, -0.58829603],
-                   [ 0.09642092, -0.3151253 ,  1.06378087],
-                   [ 0.97247267,  0.28030227, -0.39109608]])
+# non-eq methane
+# energy = -17.76212015884605 eV
+# forces = [[-1.27508078e+01 -6.22725271e+00 -2.48573744e+01]
+#  [ 1.23733381e+00 -4.76242919e+00 -5.68793880e-01]
+#  [ 8.40681290e+00  1.32375926e+01  2.15847319e+01]
+#  [-1.74132034e+00 -2.26577915e+00  3.89253669e+00]
+#  [ 4.83618538e+00  2.38282237e-02 -6.16713609e-02]]
+
+methane = np.array([[-1.65678048,    0.70894727,    0.28577386],
+                    [-1.32345858,   -0.23386581,    0.28577386],
+                    [-1.39010920,    1.08606742,    0.93897124],
+                    [-1.15677183,    1.41604753,   -0.93897124],
+                    [-3.25678048,    0.70896698,    0.28577386]])
+
+# eq methane
+# energy = 24.
+# methane = np.array([[-0.02209687,  0.00321505,  0.01651974],
+#                    [-0.66900878,  0.88935986, -0.1009085 ],
+#                    [-0.37778794, -0.85775189, -0.58829603],
+#                    [ 0.09642092, -0.3151253 ,  1.06378087],
+#                    [ 0.97247267,  0.28030227, -0.39109608]])
 
 bonds = [(0,1),(0,2),(0,3),(0,4)]
 
@@ -154,9 +170,9 @@ class MA_env(MultiAgentEnv):
                     # 2.571103
                     if spherical_forces[idx][0] < 0.01:
                         self.dones.add(idx)
-                print(f"forces = {spherical_forces[:,0]} energies = {e}")
+                print(f"forces = {spherical_forces[:,0]} energies = {e} coordinates {atoms.get_positions().flatten()}")
                 # print(f"energies = {self.energies}")
-                print(f"bonds = {np.array([dist_mat[i] for i in bonds])}")
+                # print(f"bonds = {np.array([dist_mat[i] for i in bonds])}")
             except:
                 print("GPAW Converge error")
                 print(f"bonds {np.array([dist_mat[i] for i in bonds])}")

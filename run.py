@@ -79,7 +79,7 @@ config["env_config"] =  {"atoms":["C", "H", "H", "H", "H"]}
 config["rollout_fragment_length"] = 16
 config["sgd_minibatch_size"] = 16
 config["train_batch_size"] = 160
-config["num_workers"] = 4
+config["num_workers"] = 6
 # config["monitor"] = True
 
 print(pretty_print(config))
@@ -88,7 +88,7 @@ print(pretty_print(config))
 ray.init()
 agent = ppo.PPOTrainer(config, env="MA_env")
 
-n_iter = 200
+n_iter = 100
 for n in range(n_iter):
     result = agent.train()
     print(pretty_print(result))
