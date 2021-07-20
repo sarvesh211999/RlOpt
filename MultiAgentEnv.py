@@ -18,6 +18,15 @@ methane = np.array([[-0.02209687,  0.00321505,  0.01651974],
                    [ 0.09642092, -0.3151253 ,  1.06378087],
                    [ 0.97247267,  0.28030227, -0.39109608]])
 
+
+methane = np.array([[-1.65678048,    0.70894727,    0.28577386],
+                    [-1.32345858,   -0.23386581,    0.28577386],
+                    [-1.39010920,    1.08606742,    0.93897124],
+                    [-1.15677183,    1.41604753,   -0.93897124],
+                    [-3.25678048,    0.70896698,    0.28577386]])
+
+bonds = [(0,1),(0,2),(0,3),(0,4)]
+
 ## AEV parameters
 Rcr = 5.2000e+00
 Rca = 3.5000e+00
@@ -125,26 +134,38 @@ class MA_env(MultiAgentEnv):
 
         atoms = Atoms('C1H4', positions=final_coordinates)
         atoms.center(vacuum=3.0)
-        try:
-            calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
-            atoms.calc = calc
 
-            f = atoms.get_forces()
-            e = atoms.get_potential_energy()
-            self.energies.append(e)
-            
+        dist_mat = euclidean_distances(atoms.get_positions())
+        
+        # check if bond breaks with distance cutoff
+        bond_dist = np.array([dist_mat[i] for i in bonds]) < 2.0
+        if np.all(bond_dist):
 
-            spherical_forces = cartesian_to_spherical(f)
+            try:
+                calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
+                atoms.calc = calc
 
-            for idx,key in enumerate(self.atom_agent_map):
-                rew[key] = np.abs(1/(spherical_forces[idx][0]))
-                if spherical_forces[idx][0] < 2.571103:
+                f = atoms.get_forces()
+                e = atoms.get_potential_energy()
+                self.energies.append(e)
+                
+
+                # spherical_forces = cartesian_to_spherical(f)
+
+                for idx,key in enumerate(self.atom_agent_map):
+                    rew[key] = np.abs(1/max(f[idx]))
+                    if spherical_forces[idx][0] < 1:
+                        self.dones.add(idx)
+                print(f"forces = {spherical_forces[:,0]} energies = {e} coordinates {atoms.get_positions().flatten()}")
+            except:
+                print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])}")
+                for idx,key in enumerate(self.atom_agent_map):
+                    rew[key] = -0.20
                     self.dones.add(idx)
-            print(spherical_forces[:,0],e)
-        except:
-            print("GPAW Converge error")
+        else:
+            print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])}")
             for idx,key in enumerate(self.atom_agent_map):
-                rew[key] = -1
+                rew[key] = -0.20
                 self.dones.add(idx)
 
 # 2.571103
