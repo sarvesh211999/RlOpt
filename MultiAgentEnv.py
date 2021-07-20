@@ -5,18 +5,24 @@ from ray.tune.registry import register_env
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 import numpy as np
 import random
+from sklearn.metrics.pairwise import euclidean_distances
 
 from ase import Atoms
 from ase.io import Trajectory
 from gpaw import GPAW
 import torch
 import torchani
+import warnings
+from rdkit import Chem
+from rdkit.Chem import AllChem
 
-methane = np.array([[-0.02209687,  0.00321505,  0.01651974],
-                   [-0.66900878,  0.88935986, -0.1009085 ],
-                   [-0.37778794, -0.85775189, -0.58829603],
-                   [ 0.09642092, -0.3151253 ,  1.06378087],
-                   [ 0.97247267,  0.28030227, -0.39109608]])
+warnings.simplefilter(action='ignore')
+
+# methane = np.array([[-0.02209687,  0.00321505,  0.01651974],
+#                    [-0.66900878,  0.88935986, -0.1009085 ],
+#                    [-0.37778794, -0.85775189, -0.58829603],
+#                    [ 0.09642092, -0.3151253 ,  1.06378087],
+#                    [ 0.97247267,  0.28030227, -0.39109608]])
 
 
 methane = np.array([[-1.65678048,    0.70894727,    0.28577386],
@@ -24,6 +30,25 @@ methane = np.array([[-1.65678048,    0.70894727,    0.28577386],
                     [-1.39010920,    1.08606742,    0.93897124],
                     [-1.15677183,    1.41604753,   -0.93897124],
                     [-3.25678048,    0.70896698,    0.28577386]])
+
+
+## generating conformers
+def generateconformations(m, n):
+    m = Chem.AddHs(m)
+    ids=AllChem.EmbedMultipleConfs(m, numConfs=n, params=AllChem.ETKDG())
+    # EmbedMultipleConfs returns a Boost-wrapped type which
+    # cannot be pickled. Convert it to a Python list, which can.
+    return m, list(ids)
+m = Chem.MolFromSmiles('C')
+n = 100
+
+mol, ids = generateconformations(m, n)
+
+methane_conformers = []
+# for idx in range(n):
+#     methane_conformers.append(mol.GetConformer(idx).GetPositions())
+
+methane_conformers.append(methane)
 
 bonds = [(0,1),(0,2),(0,3),(0,4)]
 
@@ -86,13 +111,26 @@ class MA_env(MultiAgentEnv):
         self.observation_space = spaces.Box(low=-10000,high=10000, shape=(768,))
 
         self.energies = []
+        self.trajectory = []
     
     def reset(self):
+        self.trajectory = []
         print("Reset called")
-        print("Energies:    ",self.energies)
+        # print("Energies:    ",self.energies)
+
+
         self.dones = set()
         self.energies = []
-        self.curr_coordinates = methane
+        self.curr_coordinates = random.choice(methane_conformers)
+        self.trajectory.append(methane)
+        atoms = Atoms('C1H4', positions=self.curr_coordinates)
+        atoms.center(vacuum=3.0)
+
+        calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
+        atoms.calc = calc
+
+        e = atoms.get_potential_energy()
+        self.energies.append(e)
 
         ## set new molecule from dataset here
         # coordinates = cartesian_to_spherical(methane)
@@ -104,7 +142,7 @@ class MA_env(MultiAgentEnv):
         ``(C, A, 3)`` where ``C`` is the number of molecules in a chunk,
         and ``A`` is the number of atoms."""
         species = species_to_tensor(["C", "H", "H", "H", "H"]).unsqueeze(dim=0)
-        coor = torch.tensor(self.curr_coordinates).unsqueeze(dim=0)
+        coor = torch.FloatTensor(self.curr_coordinates).unsqueeze(dim=0)
         result = aev_computer((species.to(device), coor.to(device)))
         aev = result.aevs
         return_dict = {self.atom_agent_map[i]: agent.reset(aev[0,i],self.curr_coordinates[i]) for i, agent in enumerate(self.agents)}
@@ -113,6 +151,7 @@ class MA_env(MultiAgentEnv):
 
     def step(self, action):
         obs, rew, done, info = {}, {}, {}, {}
+        self.dones = set()
         for val in self.atom_agent_map:
             obs[val] = None
             rew[val] = None
@@ -120,12 +159,16 @@ class MA_env(MultiAgentEnv):
             info[val] = None
 
         for idx, val in action.items():            
-            obs[idx], rew[idx], done[idx], info[idx] = self.agents[self.atom_agent_map.index(idx)].step(val)
+            res = self.agents[self.atom_agent_map.index(idx)].step(val)
+            obs[idx], rew[idx], done[idx], info[idx] = res
 
+        # print([obs[key] for key in self.atom_agent_map])
         final_coordinates = np.array([obs[key] for key in self.atom_agent_map])
+        self.trajectory.append(final_coordinates)
+
 
         species = species_to_tensor(["C", "H", "H", "H", "H"]).unsqueeze(dim=0)
-        coor = torch.tensor(final_coordinates).unsqueeze(dim=0)
+        coor = torch.FloatTensor(final_coordinates).unsqueeze(dim=0)
         result = aev_computer((species.to(device), coor.to(device)))
         aev = result.aevs
         obs = {self.atom_agent_map[i]: np.array(aev[0,i]) for i, agent in enumerate(self.agents)}
@@ -139,6 +182,7 @@ class MA_env(MultiAgentEnv):
         
         # check if bond breaks with distance cutoff
         bond_dist = np.array([dist_mat[i] for i in bonds]) < 2.0
+        terminate = False
         if np.all(bond_dist):
 
             try:
@@ -147,26 +191,30 @@ class MA_env(MultiAgentEnv):
 
                 f = atoms.get_forces()
                 e = atoms.get_potential_energy()
+                max_force = np.max(f)
                 self.energies.append(e)
-                
 
-                # spherical_forces = cartesian_to_spherical(f)
+                if max_force < 1:
+                    print("Converged")
+                    terminate = True
+
+                spherical_forces = cartesian_to_spherical(f)
 
                 for idx,key in enumerate(self.atom_agent_map):
-                    rew[key] = np.abs(1/max(f[idx]))
-                    if spherical_forces[idx][0] < 1:
-                        self.dones.add(idx)
-                print(f"forces = {spherical_forces[:,0]} energies = {e} coordinates {atoms.get_positions().flatten()}")
+                    rew[key] = min(np.abs(1/(spherical_forces[:,0][idx])),2)
+                print(f"forces = {spherical_forces[:,0]} \t energies = {e}")
             except:
-                print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])}")
+                print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])} , Exception")
+                terminate = True
                 for idx,key in enumerate(self.atom_agent_map):
-                    rew[key] = -0.20
-                    self.dones.add(idx)
+                    rew[key] = -2
+                self.energies.append("None")
         else:
-            print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])}")
+            print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])} , Else")
+            terminate = True
             for idx,key in enumerate(self.atom_agent_map):
-                rew[key] = -0.20
-                self.dones.add(idx)
+                rew[key] = -2
+            self.energies.append("None")
 
 # 2.571103
 
@@ -174,7 +222,7 @@ class MA_env(MultiAgentEnv):
 
         ## calculate atom wise reward here
 
-        done["__all__"] = len(self.dones) == len(self.agents)
+        done["__all__"] = terminate
 
         return obs, rew, done, info
 
