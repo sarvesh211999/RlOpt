@@ -10,9 +10,15 @@ from sklearn.metrics.pairwise import euclidean_distances
 from ase import Atoms
 from ase.io import Trajectory
 from ase.calculators.emt import EMT
-from gpaw import GPAW
+from gpaw import GPAW, PW, FD
 import torch
 import torchani
+import warnings
+
+warnings.simplefilter(action='ignore')
+
+data = np.load("data/rl4opt.npz")
+
 
 # non-eq methane
 # energy = -17.76212015884605 eV
@@ -35,6 +41,9 @@ methane = np.array([[-1.65678048,    0.70894727,    0.28577386],
 #                    [-0.37778794, -0.85775189, -0.58829603],
 #                    [ 0.09642092, -0.3151253 ,  1.06378087],
 #                    [ 0.97247267,  0.28030227, -0.39109608]])
+
+methane_conformers = []
+methane_conformers.append(methane)
 
 bonds = [(0,1),(0,2),(0,3),(0,4)]
 
@@ -64,7 +73,6 @@ def cartesian_to_spherical(pos: np.ndarray) -> np.ndarray:
     theta_phi[..., 0] = r
     theta_phi[..., 1] = np.arccos(z / r)  # theta
     theta_phi[..., 2] = np.arctan2(y, x)  # phi
-
     return theta_phi
 
 def spherical_to_cartesian(theta_phi: np.ndarray) -> np.ndarray:
@@ -74,6 +82,11 @@ def spherical_to_cartesian(theta_phi: np.ndarray) -> np.ndarray:
     z = r * np.cos(theta)
     return np.stack([x, y, z], axis=-1)
 
+def custom_reward(forces: np.ndarray, idx):
+    # pdb.set_trace()
+    own_atom = np.abs(1/(forces[:,0][idx]))
+    other_atoms = np.abs(1/np.sum(np.delete(forces[:,0], idx)))
+    return own_atom*0.5 + other_atoms*0.5
 
 class MA_env(MultiAgentEnv):
     def __init__(self, env_config):
@@ -92,18 +105,39 @@ class MA_env(MultiAgentEnv):
         for key in self.atoms:
             self.agents.append(Atom_Agent())
 
-        self.action_space = spaces.Box(low=-0.5,high=0.5, shape=(3,))
+        self.action_space = spaces.Box(low=-0.1,high=0.1, shape=(3,))
         self.observation_space = spaces.Box(low=-10000,high=10000, shape=(768,))
 
         self.energies = []
+        self.trajectory = []
     
     def reset(self):
+
+        self.trajectory = []
         print("\nReset called")
         # print("Energies:    ",self.energies)
         self.dones = set()
         self.energies = []
-        self.curr_coordinates = methane
+        self.curr_coordinates = random.choice(methane_conformers)
+        self.trajectory.append(methane)
+        atoms = Atoms('C1H4', positions=self.curr_coordinates)
+        atoms.center(vacuum=3.0)
 
+        calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
+        atoms.calc = calc
+
+        e = atoms.get_potential_energy()
+        spherical_forces = cartesian_to_spherical(atoms.get_forces())
+        self.energies.append(e)
+
+        # calculte euclidean distance
+        dist_mat = euclidean_distances(atoms.get_positions())
+        
+        # check if bond breaks with distance cutoff
+        bond_dist = np.array([dist_mat[i] for i in bonds]) < 2.5
+        
+        # print(self.curr_coordinates, e)
+        print(f"forces = {spherical_forces[:,0]} energies = {e} bonds = {np.array([dist_mat[i] for i in bonds])}")
         ## set new molecule from dataset here
         # coordinates = cartesian_to_spherical(methane)
         # return_dict = {self.atom_agent_map[i]: agent.reset(coordinates[i]) for i, agent in enumerate(self.agents)}
@@ -114,7 +148,7 @@ class MA_env(MultiAgentEnv):
         ``(C, A, 3)`` where ``C`` is the number of molecules in a chunk,
         and ``A`` is the number of atoms."""
         species = species_to_tensor(["C", "H", "H", "H", "H"]).unsqueeze(dim=0)
-        coor = torch.tensor(self.curr_coordinates).unsqueeze(dim=0)
+        coor = torch.FloatTensor(self.curr_coordinates).unsqueeze(dim=0)
         result = aev_computer((species.to(device), coor.to(device)))
         aev = result.aevs
         return_dict = {self.atom_agent_map[i]: agent.reset(aev[0,i],self.curr_coordinates[i]) for i, agent in enumerate(self.agents)}
@@ -123,80 +157,108 @@ class MA_env(MultiAgentEnv):
 
     def step(self, action):
         obs, rew, done, info = {}, {}, {}, {}
+        self.dones = set()
         for val in self.atom_agent_map:
             obs[val] = None
             rew[val] = None
             done[val] = None
             info[val] = None
-
+      
         for idx, val in action.items():            
-            obs[idx], rew[idx], done[idx], info[idx] = self.agents[self.atom_agent_map.index(idx)].step(val)
+            res = self.agents[self.atom_agent_map.index(idx)].step(val)
+            obs[idx], rew[idx], done[idx], info[idx] = res
+            # print(f"{idx}:- {obs[idx]} {val}")
 
         final_coordinates = np.array([obs[key] for key in self.atom_agent_map])
+        self.trajectory.append(final_coordinates)
 
+        # pdb.set_trace()
         species = species_to_tensor(["C", "H", "H", "H", "H"]).unsqueeze(dim=0)
-        coor = torch.tensor(final_coordinates).unsqueeze(dim=0)
+        coor = torch.FloatTensor(final_coordinates).unsqueeze(dim=0)
         result = aev_computer((species.to(device), coor.to(device)))
         aev = result.aevs
         obs = {self.atom_agent_map[i]: np.array(aev[0,i]) for i, agent in enumerate(self.agents)}
         # cart_coordinates = spherical_to_cartesian(final_coordinates)
 
         atoms = Atoms('C1H4', positions=final_coordinates)
-        atoms.center(vacuum=3.0)
+        atoms.center(vacuum=5.0)
 
         # calculte euclidean distance
         dist_mat = euclidean_distances(atoms.get_positions())
         
         # check if bond breaks with distance cutoff
-        bond_dist = np.array([dist_mat[i] for i in bonds]) < 2.0
-
+        bond_dist = np.array([dist_mat[i] for i in bonds]) < 2.5
+        terminate = False
         if np.all(bond_dist):
             try:
-                calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
+                calc = GPAW(xc="PBE", mode=FD(nn=3), txt='gpaw.txt')
+                # calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
                 # calc = EMT()
 
                 atoms.calc = calc
 
                 f = atoms.get_forces()
                 e = atoms.get_potential_energy()
+                max_force = np.max(np.abs(f))
                 self.energies.append(e)
                 
+                if max_force <= 1:
+                    print("Converged")
+                    terminate = True
                 spherical_forces = cartesian_to_spherical(f)
+                # spherical_forces = f
 
                 for idx,key in enumerate(self.atom_agent_map):
-                    rew[key] = np.abs(1/(spherical_forces[idx][0]))
-                    # force should be less than 0.01 eV/A 
+                    # rew[key] = min(np.abs(1/(spherical_forces[:,0][idx])),2)            # force should be less than 0.01 eV/A 
+                    rew[key] = np.clip(1/(spherical_forces[:,0][idx]), 1, 10)           # force should be less than 0.01 eV/A 
+                    # rew[key] = np.log10(np.abs(1/(spherical_forces[:,0][idx])))            # force should be less than 0.01 eV/A 
+                    # rew[key] = custom_reward(spherical_forces, idx)            # force should be less than 0.01 eV/A 
                     # 1 Hartree/Bohr = 51.42208619083232 eV/A
                     # 2.571103
-                    if spherical_forces[idx][0] < 0.01:
-                        self.dones.add(idx)
-                print(f"forces = {spherical_forces[:,0]} energies = {e} coordinates {atoms.get_positions().flatten()}")
+                    # if spherical_forces[idx][0] < 0.1:
+                    #     self.dones.add(idx)
+                
+                # print(f"forces = {spherical_forces[:,0]} energies = {e}")# coordinates {atoms.get_positions().flatten()}")
+                # print(f"forces = {cartesian_to_spherical(f)[:,0]} energies = {e} coordinates {atoms.get_positions().flatten()}")
                 # print(f"energies = {self.energies}")
-                # print(f"bonds = {np.array([dist_mat[i] for i in bonds])}")
+                print(f"forces = {spherical_forces[:,0]} energies = {e} bonds = {np.array([dist_mat[i] for i in bonds])}")
+                # print(f"reward = {rew}")
             except:
                 print("GPAW Converge error")
-                print(f"bonds {np.array([dist_mat[i] for i in bonds])}")
-                for idx,key in enumerate(self.atom_agent_map):
-                    rew[key] = -0.20
-                    self.dones.add(idx)
+                # print(f"bonds {np.array([dist_mat[i] for i in bonds])}")
+                terminate = True
+                for idx, key in enumerate(self.atom_agent_map):
+                    rew[key] = -5.0
+                    # self.dones.add(idx)
+                self.energies.append("None")
         else:
             print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])}")
-            for idx,key in enumerate(self.atom_agent_map):
-                rew[key] = -0.20
-                self.dones.add(idx)
+            terminate = True
+            for idx, key in enumerate(self.atom_agent_map):
+                rew[key] = -5.0
+                # self.dones.add(idx)
+            self.energies.append("None")
 
         ## convert obs to feature vector here
 
         ## calculate atom wise reward here
+        # done["__all__"] = len(self.dones) == len(self.agents)
+        done["__all__"] = terminate
+        # try:
+        
+        # obs["forces"] = torch.FloatTensor(spherical_forces[:,0])
+        # obs["energy"] = torch.FloatTensor(e)
+        # obs["bonds"] = torch.FloatTensor([dist_mat[i] for i in bonds])
 
-        done["__all__"] = len(self.dones) == len(self.agents)
-
+        # info["forces"] = spherical_forces[:,0]
+        # info["energy"] = e
+        # info["bonds"] = np.array([dist_mat[i] for i in bonds])
         return obs, rew, done, info
 
 
 class Atom_Agent(gym.Env):
     def __init__(self):
-        self.action_space = spaces.Box(low=-0.5,high=0.5, shape=(3,))
+        self.action_space = spaces.Box(low=-0.1,high=0.1, shape=(3,))
         self.observation_space = spaces.Box(low=-10000,high=10000, shape=(768,))
 
     def reset(self,feature,coordinates):
@@ -208,4 +270,4 @@ class Atom_Agent(gym.Env):
     
     def step(self, action):
         self.coordinates = self.coordinates + np.array(action)
-        return self.coordinates, None,False, {}
+        return self.coordinates, None, False, {}
