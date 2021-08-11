@@ -49,7 +49,7 @@ class MyCallbacks(DefaultCallbacks):
         # print("episode {} (env-idx={}) end.".format(
         #     episode.episode_id, env_index))
         # print("----------------------------------")
-        pdb.set_trace()
+        # pdb.set_trace()
         trajectories =  base_env.get_unwrapped()[0].trajectory
         energies =  base_env.get_unwrapped()[0].energies
 
@@ -132,10 +132,10 @@ config["log_level"] = "WARN"
 config["framework"] = "torch"
 config["num_gpus"] =  int(os.environ.get("RLLIB_NUM_GPUS", "0"))
 config["env_config"] =  {"atoms":["C", "H", "H", "H", "H"]}
-config["rollout_fragment_length"] = 40
+config["rollout_fragment_length"] = 32
 config["sgd_minibatch_size"] = 16
-config["train_batch_size"] = 160
-config["num_workers"] = 1
+config["train_batch_size"] = 96
+config["num_workers"] = 4
 config["callbacks"] = MyCallbacks
 # config["record_env"] = True
 
@@ -144,7 +144,7 @@ print(pretty_print(config))
 ray.init()
 agent = ppo.PPOTrainer(config, env="MA_env")
 
-n_iter = 40
+n_iter = 200
 for n in range(n_iter):
     result = agent.train()
     print(pretty_print(result))

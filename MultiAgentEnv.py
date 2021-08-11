@@ -122,8 +122,8 @@ class MA_env(MultiAgentEnv):
         self.trajectory.append(methane)
         atoms = Atoms('C1H4', positions=self.curr_coordinates)
         atoms.center(vacuum=3.0)
-
-        calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
+        calc = GPAW(xc="PBE", mode=FD(nn=3), txt='gpaw.txt')
+        # calc = GPAW(mode='lcao', basis='dzp', txt='gpaw.txt')
         atoms.calc = calc
 
         e = atoms.get_potential_energy()
@@ -172,7 +172,6 @@ class MA_env(MultiAgentEnv):
         final_coordinates = np.array([obs[key] for key in self.atom_agent_map])
         self.trajectory.append(final_coordinates)
 
-        # pdb.set_trace()
         species = species_to_tensor(["C", "H", "H", "H", "H"]).unsqueeze(dim=0)
         coor = torch.FloatTensor(final_coordinates).unsqueeze(dim=0)
         result = aev_computer((species.to(device), coor.to(device)))
@@ -181,7 +180,7 @@ class MA_env(MultiAgentEnv):
         # cart_coordinates = spherical_to_cartesian(final_coordinates)
 
         atoms = Atoms('C1H4', positions=final_coordinates)
-        atoms.center(vacuum=5.0)
+        atoms.center(vacuum=3.0)
 
         # calculte euclidean distance
         dist_mat = euclidean_distances(atoms.get_positions())
@@ -202,22 +201,28 @@ class MA_env(MultiAgentEnv):
                 max_force = np.max(np.abs(f))
                 self.energies.append(e)
                 
-                if max_force <= 1:
-                    print("Converged")
-                    terminate = True
+                # if max_force < 1:
+                #     print("Converged")
+                #     terminate = True
                 spherical_forces = cartesian_to_spherical(f)
                 # spherical_forces = f
 
-                for idx,key in enumerate(self.atom_agent_map):
+                # pdb.set_trace()
+                for idx, key in enumerate(self.atom_agent_map):
+                    if spherical_forces[:,0].max() < 1:
+                        print("Converged")
+                        terminate = True
+                        rew[key] = 1.0
+                    else:
+                        rew[key] = 0.0
                     # rew[key] = min(np.abs(1/(spherical_forces[:,0][idx])),2)            # force should be less than 0.01 eV/A 
-                    rew[key] = np.clip(1/(spherical_forces[:,0][idx]), 1, 10)           # force should be less than 0.01 eV/A 
+                    # rew[key] = np.abs(1/(spherical_forces[:,0][idx]))            # force should be less than 0.01 eV/A 
                     # rew[key] = np.log10(np.abs(1/(spherical_forces[:,0][idx])))            # force should be less than 0.01 eV/A 
                     # rew[key] = custom_reward(spherical_forces, idx)            # force should be less than 0.01 eV/A 
                     # 1 Hartree/Bohr = 51.42208619083232 eV/A
                     # 2.571103
                     # if spherical_forces[idx][0] < 0.1:
                     #     self.dones.add(idx)
-                
                 # print(f"forces = {spherical_forces[:,0]} energies = {e}")# coordinates {atoms.get_positions().flatten()}")
                 # print(f"forces = {cartesian_to_spherical(f)[:,0]} energies = {e} coordinates {atoms.get_positions().flatten()}")
                 # print(f"energies = {self.energies}")
@@ -228,14 +233,14 @@ class MA_env(MultiAgentEnv):
                 # print(f"bonds {np.array([dist_mat[i] for i in bonds])}")
                 terminate = True
                 for idx, key in enumerate(self.atom_agent_map):
-                    rew[key] = -5.0
+                    rew[key] = -1.0
                     # self.dones.add(idx)
                 self.energies.append("None")
         else:
             print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])}")
             terminate = True
             for idx, key in enumerate(self.atom_agent_map):
-                rew[key] = -5.0
+                rew[key] = -1.0
                 # self.dones.add(idx)
             self.energies.append("None")
 
