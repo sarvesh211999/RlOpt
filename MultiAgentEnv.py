@@ -82,12 +82,6 @@ def spherical_to_cartesian(theta_phi: np.ndarray) -> np.ndarray:
     z = r * np.cos(theta)
     return np.stack([x, y, z], axis=-1)
 
-def custom_reward(forces: np.ndarray, idx):
-    # pdb.set_trace()
-    own_atom = np.abs(1/(forces[:,0][idx]))
-    other_atoms = np.abs(1/np.sum(np.delete(forces[:,0], idx)))
-    return own_atom*0.5 + other_atoms*0.5
-
 class MA_env(MultiAgentEnv):
     def __init__(self, env_config):
         # pick actual env based on worker and env indexes
@@ -105,8 +99,8 @@ class MA_env(MultiAgentEnv):
         for key in self.atoms:
             self.agents.append(Atom_Agent())
 
-        self.action_space = spaces.Box(low=-0.1,high=0.1, shape=(3,))
-        self.observation_space = spaces.Box(low=-10000,high=10000, shape=(768,))
+        self.action_space = spaces.Box(low=-0.05,high=0.05, shape=(3,))
+        self.observation_space = spaces.Box(low=-10000,high=10000, shape=(768+3,))
 
         self.energies = []
         self.trajectory = []
@@ -127,7 +121,8 @@ class MA_env(MultiAgentEnv):
         atoms.calc = calc
 
         e = atoms.get_potential_energy()
-        spherical_forces = cartesian_to_spherical(atoms.get_forces())
+        unit_forces = atoms.get_forces()
+        spherical_forces = cartesian_to_spherical(unit_forces)
         self.energies.append(e)
 
         # calculte euclidean distance
@@ -150,7 +145,7 @@ class MA_env(MultiAgentEnv):
         species = species_to_tensor(["C", "H", "H", "H", "H"]).unsqueeze(dim=0)
         coor = torch.FloatTensor(self.curr_coordinates).unsqueeze(dim=0)
         result = aev_computer((species.to(device), coor.to(device)))
-        aev = result.aevs
+        aev = torch.cat((result.aevs, torch.from_numpy(unit_forces).unsqueeze(0)), 2)
         return_dict = {self.atom_agent_map[i]: agent.reset(aev[0,i],self.curr_coordinates[i]) for i, agent in enumerate(self.agents)}
         return return_dict
 
@@ -171,13 +166,6 @@ class MA_env(MultiAgentEnv):
 
         final_coordinates = np.array([obs[key] for key in self.atom_agent_map])
         self.trajectory.append(final_coordinates)
-
-        species = species_to_tensor(["C", "H", "H", "H", "H"]).unsqueeze(dim=0)
-        coor = torch.FloatTensor(final_coordinates).unsqueeze(dim=0)
-        result = aev_computer((species.to(device), coor.to(device)))
-        aev = result.aevs
-        obs = {self.atom_agent_map[i]: np.array(aev[0,i]) for i, agent in enumerate(self.agents)}
-        # cart_coordinates = spherical_to_cartesian(final_coordinates)
 
         atoms = Atoms('C1H4', positions=final_coordinates)
         atoms.center(vacuum=3.0)
@@ -201,22 +189,21 @@ class MA_env(MultiAgentEnv):
                 max_force = np.max(np.abs(f))
                 self.energies.append(e)
                 
-                # if max_force < 1:
-                #     print("Converged")
-                #     terminate = True
+                if max_force < 1:
+                    print("Converged")
+                    terminate = True
                 spherical_forces = cartesian_to_spherical(f)
                 # spherical_forces = f
 
-                # pdb.set_trace()
                 for idx, key in enumerate(self.atom_agent_map):
-                    if spherical_forces[:,0].max() < 1:
-                        print("Converged")
-                        terminate = True
+                    if spherical_forces[:,0][idx] < 1:
+                        # print("Converged")
+                        # terminate = True
                         rew[key] = 1.0
                     else:
                         rew[key] = 0.0
                     # rew[key] = min(np.abs(1/(spherical_forces[:,0][idx])),2)            # force should be less than 0.01 eV/A 
-                    # rew[key] = np.abs(1/(spherical_forces[:,0][idx]))            # force should be less than 0.01 eV/A 
+                    # rew[key] = np.clip(1/(spherical_forces[:,0][idx]), -1, 10)            # force should be less than 0.01 eV/A 
                     # rew[key] = np.log10(np.abs(1/(spherical_forces[:,0][idx])))            # force should be less than 0.01 eV/A 
                     # rew[key] = custom_reward(spherical_forces, idx)            # force should be less than 0.01 eV/A 
                     # 1 Hartree/Bohr = 51.42208619083232 eV/A
@@ -237,12 +224,27 @@ class MA_env(MultiAgentEnv):
                     # self.dones.add(idx)
                 self.energies.append("None")
         else:
-            print(f"Bond larger that 2.0 A: {np.array([dist_mat[i] for i in bonds])}")
+            print(f"Bond larger that 2.5 A: {np.array([dist_mat[i] for i in bonds])}")
             terminate = True
             for idx, key in enumerate(self.atom_agent_map):
                 rew[key] = -1.0
                 # self.dones.add(idx)
+            pdb.set_trace()
             self.energies.append("None")
+
+        ######## calculate aev (feature vector) from final_coordinates after step has been taken
+        ######## create observation dict of all aevs
+        species = species_to_tensor(["C", "H", "H", "H", "H"]).unsqueeze(dim=0)
+        coor = torch.FloatTensor(final_coordinates).unsqueeze(dim=0)
+        result = aev_computer((species.to(device), coor.to(device)))
+        if self.energies[-1] == "None":
+            get_shape = atoms.positions.shape
+            dummy_forces = np.ones(get_shape)*700
+            aev = torch.cat((result.aevs, torch.from_numpy(dummy_forces).unsqueeze(0)), 2)
+        else:
+            aev = torch.cat((result.aevs, torch.from_numpy(f).unsqueeze(0)), 2)
+        obs = {self.atom_agent_map[i]: np.array(aev[0,i]) for i, agent in enumerate(self.agents)}
+        # cart_coordinates = spherical_to_cartesian(final_coordinates)
 
         ## convert obs to feature vector here
 
@@ -263,8 +265,8 @@ class MA_env(MultiAgentEnv):
 
 class Atom_Agent(gym.Env):
     def __init__(self):
-        self.action_space = spaces.Box(low=-0.1,high=0.1, shape=(3,))
-        self.observation_space = spaces.Box(low=-10000,high=10000, shape=(768,))
+        self.action_space = spaces.Box(low=-0.05,high=0.05, shape=(3,))
+        self.observation_space = spaces.Box(low=-10000,high=10000, shape=(768+3,))
 
     def reset(self,feature,coordinates):
         self.feature = np.array(feature)

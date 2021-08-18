@@ -12,14 +12,14 @@ import gym, ray
 from gym import spaces
 from scipy.spatial import distance
 # import pdb
-import MultiAgentEnv as ma_env
+import MultiAgentEnv_eval as ma_env
 import tempfile
 from ase import Atoms
 from gpaw import GPAW, PW, FD
 from ase.optimize import QuasiNewton, BFGS
 from ase.io.trajectory import Trajectory
 
-from policy import PolicyNetwork
+from policy_eval import PolicyNetwork
 from ray.rllib.utils.annotations import override
 from ray.rllib.models import ModelCatalog
 from ray.tune.registry import register_env
@@ -28,6 +28,7 @@ import ray.rllib.agents.ppo as ppo
 import os, pdb
 from ray.tune.logger import pretty_print
 from ray.tune.logger import Logger, UnifiedLogger
+import time
 
 from typing import Dict
 from ray import tune
@@ -49,7 +50,7 @@ ModelCatalog.register_custom_model("modelC", model_C)
 ModelCatalog.register_custom_model("modelH", model_H)
 
 act_space = spaces.Box(low=-0.05, high=0.05, shape=(3,))
-obs_space = spaces.Box(low=-10000, high=10000, shape=(768,))
+obs_space = spaces.Box(low=-10000, high=10000, shape=(768+3,))
 
 def gen_policy(atom):
     model = "model{}".format(atom)
@@ -125,7 +126,7 @@ agent = ppo.PPOTrainer(config=config, env="MA_env", logger_creator=custom_log_cr
 # In[6]:
 
 
-agent.restore("/home/rohit/ray_results/PPO_MA_env_2021-08-10_15-43-05_discrete_reward/checkpoint_000091/checkpoint-91")
+agent.restore("/home/rohit/ray_results/PPO_MA_env_2021-08-17_16-10-38_discrete_rew_fr_aev_n_fr/checkpoint_000091/checkpoint-91")
 
 
 # In[7]:
@@ -154,13 +155,15 @@ action = {}
 done = False
 for i in range(10):
 # while done != True:
-#     pdb.set_trace()
     for agent_id, agent_obs in obs.items():
     #     print(agent_id, agent_obs)
         policy_id = config['multiagent']['policy_mapping_fn'](agent_id)
     #     action[agent_id] = agent.compute_action(agent_obs, policy_id=policy_id)
         action[agent_id] = agent.compute_single_action(agent_obs, policy_id=policy_id)
     obs, rew, done, info = env.step(action)
+    # if env.energies[-1] > env.energies[-2]:
+    #     print("change in step size")
+    #     act_space = spaces.Box(low=-0.05, high=0.05, shape=(3,))
     print(f"actions: {action}")
     print("\n")
 #     all_info.append(info)
@@ -180,18 +183,18 @@ ray.shutdown()
 #                    [ 0.09642092, -0.3151253 ,  1.06378087],
 #                    [ 0.97247267,  0.28030227, -0.39109608]])
 
+# eq structure
+# atoms = Atoms('C1H4', positions=np.array([[-0.02209687,  0.00321505,  0.01651974],
+#                                           [-0.66900878,  0.88935986, -0.1009085 ],
+#                                           [-0.37778794, -0.85775189, -0.58829603],
+#                                           [ 0.09642092, -0.3151253 ,  1.06378087],
+#                                           [ 0.97247267,  0.28030227, -0.39109608]]))
 
-atoms = Atoms('C1H4', positions=np.array([[-0.02209687,  0.00321505,  0.01651974],
-                                          [-0.66900878,  0.88935986, -0.1009085 ],
-                                          [-0.37778794, -0.85775189, -0.58829603],
-                                          [ 0.09642092, -0.3151253 ,  1.06378087],
-                                          [ 0.97247267,  0.28030227, -0.39109608]]))
-
-# atoms = Atoms('C1H4', positions=np.array([[-1.65678048,    0.70894727,    0.28577386],
-#                                           [-1.32345858,   -0.23386581,    0.28577386],
-#                                           [-1.39010920,    1.08606742,    0.93897124],
-#                                           [-1.15677183,    1.41604753,   -0.93897124],
-#                                           [-3.25678048,    0.70896698,    0.28577386]]))
+atoms = Atoms('C1H4', positions=np.array([[-1.65678048,    0.70894727,    0.28577386],
+                                          [-1.32345858,   -0.23386581,    0.28577386],
+                                          [-1.39010920,    1.08606742,    0.93897124],
+                                          [-1.15677183,    1.41604753,   -0.93897124],
+                                          [-3.25678048,    0.70896698,    0.28577386]]))
 
 
 # ethane = Atoms('CHHHCHHH', positions=np.array([[-1.75355881,   -0.30653455,    0.12937570],
@@ -233,6 +236,7 @@ def read_traj(in_traj):
 
 
 # do_optim(atoms, "traj_dir/methane_eval.traj")
+# time.sleep(4)
 methane_bfgs_traj = read_traj("traj_dir/methane_eval.traj")
 
 

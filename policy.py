@@ -21,7 +21,7 @@ class PolicyNetwork(TorchModelV2, nn.Module):
                                        model_config, name)
 
         self.layer_1 = SlimFC(
-            in_size=768, out_size=360, activation_fn="linear")
+            in_size=768+3, out_size=360, activation_fn="linear")
         self.layer_2 = SlimFC(
             in_size=360, out_size=180, activation_fn="relu")
         self.layer_3 = SlimFC(

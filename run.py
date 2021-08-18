@@ -97,8 +97,8 @@ ModelCatalog.register_custom_model("modelH", model_H)
 # define action space and observation space
 # action space is step the policy takes in angstrom
 # observation space are the coordinates of the single atom
-act_space = spaces.Box(low=-0.1,high=0.1, shape=(3,))
-obs_space = spaces.Box(low=-10000,high=10000, shape=(768,))
+act_space = spaces.Box(low=-0.05,high=0.05, shape=(3,))
+obs_space = spaces.Box(low=-10000,high=10000, shape=(768+3,))
 
 def gen_policy(atom):
     model = "model{}".format(atom)
@@ -134,9 +134,10 @@ config["num_gpus"] =  int(os.environ.get("RLLIB_NUM_GPUS", "0"))
 config["env_config"] =  {"atoms":["C", "H", "H", "H", "H"]}
 config["rollout_fragment_length"] = 32
 config["sgd_minibatch_size"] = 16
-config["train_batch_size"] = 96
-config["num_workers"] = 4
+config["train_batch_size"] = 32
+config["num_workers"] = 1
 config["callbacks"] = MyCallbacks
+config["horizon"] = 10
 # config["record_env"] = True
 
 print(pretty_print(config))
